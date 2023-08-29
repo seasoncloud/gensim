@@ -471,14 +471,13 @@ class HdpModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
 
 
         ######## kd tree to define the neighbors
-        kd_tree = KDTree(combined_data)
-        self.indexes = kd_tree.query_ball_tree(kd_tree, r=3)
-
-
-        ######## matrix to store the zeta values
-        shape = (hdp.m_D, hdp.m_W, hdp.m_K))
-        self.phi_array = np.full(shape, np.nan)
-        #np.isnan(nan_array[0,0])
+        if self.spatial is not None:
+            kd_tree = KDTree(self.spatial)
+            self.indexes = kd_tree.query_ball_tree(kd_tree, r=3)
+            ######## matrix to store the zeta values
+            shape = (hdp.m_D, hdp.m_W, hdp.m_K))
+            self.phi_array = np.full(shape, np.nan)
+            #np.isnan(nan_array[0,0])
 
 
         while True:
@@ -629,17 +628,17 @@ class HdpModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         v[1] = self.m_alpha
 
         ############
-        idx_phi_est=[]
-        for ii in self.indexes[doc_idx]:
-            if np.isnan(phi_array[ii,0,0]):
-                idx_phi_est.append(ii)
-
-        ############
-        if len(idx_phi_est)>0:
-            dd = np.linalg.norm(spatial[idx_phi_est] - spatial[doc_idx], axis=1)
-            phi = np.sum(phi_array[idx_phi_est,:,:] * np.array(1/dd)[:,np.newaxis, np.newaxis], axis=0)/np.sum(np.array(1/dd)[:,np.newaxis, np.newaxis], axis=0)
-
-        else: # back to the uniform
+        if self.spatial is not None:
+            idx_phi_est=[]
+            for ii in self.indexes[doc_idx]:
+                if np.isnan(self.phi_array[ii,0,0]):
+                    idx_phi_est.append(ii)
+            if len(idx_phi_est)>0:
+                dd = np.linalg.norm(spatial[idx_phi_est] - spatial[doc_idx], axis=1)
+                phi = np.sum(self.phi_array[idx_phi_est,:,:] * np.array(1/dd)[:,np.newaxis, np.newaxis], axis=0)/np.sum(np.array(1/dd)[:,np.newaxis, np.newaxis], axis=0)
+            else: # back to the uniform
+                phi = np.ones((len(doc_word_ids), self.m_K)) * 1.0 / self.m_K ##### change this part
+        else:
             phi = np.ones((len(doc_word_ids), self.m_K)) * 1.0 / self.m_K ##### change this part
 
         likelihood = 0.0
@@ -699,6 +698,8 @@ class HdpModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
 
             converge = (likelihood - old_likelihood) / abs(old_likelihood)
             old_likelihood = likelihood
+
+            self.phi_array[doc_idx,:,:]=phi
 
             if converge < -0.000001:
                 logger.warning('likelihood is decreasing!')
