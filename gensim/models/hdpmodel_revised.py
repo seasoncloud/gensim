@@ -17,6 +17,8 @@ The core estimation code is directly adapted from the `blei-lab/online-hdp <http
 from `Wang, Paisley, Blei: "Online Variational Inference for the Hierarchical Dirichlet Process",  JMLR (2011)
 <http://jmlr.csail.mit.edu/proceedings/papers/v15/wang11a/wang11a.pdf>`_.
 
+Chi-Yun Wu revideds the HDP model to incoporate spatial information from neighboring cells
+
 Examples
 --------
 
@@ -55,7 +57,8 @@ import time
 import warnings
 
 import numpy as np
-from scipy.special import gammaln, psi, KDTree  # gamma function utilsc
+from scipy.special import gammaln, psi # gamma function utilsc
+from scipy.spatial import KDTree
 from gensim import interfaces, utils, matutils
 from gensim.matutils import dirichlet_expectation, mean_absolute_difference
 from gensim.models import basemodel, ldamodel
@@ -475,7 +478,7 @@ class HdpModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
             kd_tree = KDTree(self.spatial)
             self.indexes = kd_tree.query_ball_tree(kd_tree, r=3)
             ######## matrix to store the zeta values
-            shape = (hdp.m_D, hdp.m_W, hdp.m_K))
+            shape = (self.m_D, self.m_W, self.m_K)
             self.phi_array = np.full(shape, np.nan)
             #np.isnan(nan_array[0,0])
 
@@ -631,15 +634,33 @@ class HdpModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         if self.spatial is not None:
             idx_phi_est=[]
             for ii in self.indexes[doc_idx]:
-                if np.isnan(self.phi_array[ii,0,0]):
+                if ~np.isnan(self.phi_array[ii,0,0]):
                     idx_phi_est.append(ii)
+            #print(idx_phi_est)
             if len(idx_phi_est)>0:
-                dd = np.linalg.norm(spatial[idx_phi_est] - spatial[doc_idx], axis=1)
-                phi = np.sum(self.phi_array[idx_phi_est,:,:] * np.array(1/dd)[:,np.newaxis, np.newaxis], axis=0)/np.sum(np.array(1/dd)[:,np.newaxis, np.newaxis], axis=0)
+                dd = np.linalg.norm(self.spatial[idx_phi_est] - self.spatial[doc_idx], axis=1)+0.0000000001
+                # print(self.phi_array)
+                # print(idx_phi_est)
+                # print(doc_word_ids)
+                phi_array_doc = self.phi_array[idx_phi_est,:,:]
+                phi_array_doc = phi_array_doc[:,doc_word_ids,:]
+                phi = np.sum(phi_array_doc * np.array(1/dd)[:,np.newaxis, np.newaxis], axis=0)/np.sum(np.array(1/dd)[:,np.newaxis, np.newaxis], axis=0)
+                
+                tmp_ss=np.sum(phi, axis=1)
+                
+                for ii in range(len(tmp_ss)):
+                    if tmp_ss[ii]==0:
+                        phi[ii,:]=0.000001
+                phi =  phi/(np.sum(phi, axis=1)[:,np.newaxis])
             else: # back to the uniform
                 phi = np.ones((len(doc_word_ids), self.m_K)) * 1.0 / self.m_K ##### change this part
+
+            print("-------")
+            print(idx_phi_est)
+        
         else:
             phi = np.ones((len(doc_word_ids), self.m_K)) * 1.0 / self.m_K ##### change this part
+        print(phi)
 
         likelihood = 0.0
         old_likelihood = -1e200
@@ -699,7 +720,11 @@ class HdpModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
             converge = (likelihood - old_likelihood) / abs(old_likelihood)
             old_likelihood = likelihood
 
-            self.phi_array[doc_idx,:,:]=phi
+            if self.spatial is not None:
+                tmp=np.zeros((self.m_W, self.m_K))
+                #tmp=tmp+0.000001
+                tmp[doc_word_ids,:]=phi
+                self.phi_array[doc_idx,:,:]=tmp
 
             if converge < -0.000001:
                 logger.warning('likelihood is decreasing!')
