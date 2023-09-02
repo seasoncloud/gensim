@@ -297,7 +297,7 @@ class HdpModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
     def __init__(self, corpus, id2word, max_chunks=None, max_time=None,
                  chunksize=256, kappa=1.0, tau=64.0, K=15, T=150, alpha=1,
                  gamma=1, eta=0.01, scale=1.0, var_converge=0.0001,
-                 outputdir=None, random_state=None, spatial=None):
+                 outputdir=None, random_state=None, spatial=None, nn=0.5, r=10):
         """
 
         Parameters
@@ -337,6 +337,10 @@ class HdpModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         random_state : {None, int, array_like, :class:`~np.random.RandomState`, optional}
             Adds a little random jitter to randomize results around same alpha when trying to fetch a closest
             corresponding lda model from :meth:`~gensim.models.hdpmodel.HdpModel.suggested_lda_model`
+        spatial: 2d array
+            spatial coordinates of each document
+        nn : float
+            weights to put for phi from neighboring cells
 
         """
         self.corpus = corpus
@@ -387,10 +391,14 @@ class HdpModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
             self.save_options()
 
         self.spatial=spatial
+        self.nn = nn
+
+        self.r=r
 
         # if a training corpus was provided, start estimating the model right away
         if corpus is not None:
             self.update(corpus)
+    
 
     def inference(self, chunk):
         """Infers the gamma value based for `chunk`.
@@ -476,7 +484,7 @@ class HdpModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         ######## kd tree to define the neighbors
         if self.spatial is not None:
             kd_tree = KDTree(self.spatial)
-            self.indexes = kd_tree.query_ball_tree(kd_tree, r=3)
+            self.indexes = kd_tree.query_ball_tree(kd_tree, r=self.r)
             ######## matrix to store the zeta values
             shape = (self.m_D, self.m_W, self.m_K)
             self.phi_array = np.full(shape, np.nan)
@@ -615,6 +623,9 @@ class HdpModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         var_converge : float
             Lower bound on the right side of convergence. Used when updating variational parameters for a single
             document.
+        doc_idx : int
+            doc index across all document
+
 
         Returns
         -------
@@ -652,6 +663,7 @@ class HdpModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
                     if tmp_ss[ii]==0:
                         phi[ii,:]=0.000001
                 phi =  phi/(np.sum(phi, axis=1)[:,np.newaxis])
+                
             else: # back to the uniform
                 phi = np.ones((len(doc_word_ids), self.m_K)) * 1.0 / self.m_K ##### change this part
 
@@ -660,8 +672,12 @@ class HdpModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         
         else:
             phi = np.ones((len(doc_word_ids), self.m_K)) * 1.0 / self.m_K ##### change this part
-        print(phi)
 
+        phi0=phi
+        
+        print("cell "+str(doc_idx))
+        print(phi)
+        print("iteration starts")
         likelihood = 0.0
         old_likelihood = -1e200
         converge = 1.0
@@ -671,6 +687,8 @@ class HdpModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         # not yet support second level optimization yet, to be done in the future
         while iter < max_iter and (converge < 0.0 or converge > var_converge):
             # update variational parameters
+            ##### take phi from neighboring cells
+            phi=(self.nn*phi0 + phi)/(self.nn+1)
 
             # var_phi
             if iter < 3:
@@ -725,6 +743,8 @@ class HdpModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
                 #tmp=tmp+0.000001
                 tmp[doc_word_ids,:]=phi
                 self.phi_array[doc_idx,:,:]=tmp
+
+            print(phi)
 
             if converge < -0.000001:
                 logger.warning('likelihood is decreasing!')
